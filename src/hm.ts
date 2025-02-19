@@ -10,8 +10,6 @@ const advancedPwrControlEn = 61762;
 const activePowerLimit = 61441;
 const commitPowerControl = 61696;
 
-const deadBand = 5;
-
 const client = new ModbusRTU();
 
 const connectClient = async (): Promise<void> => {
@@ -59,9 +57,10 @@ const run = async (): Promise<void> => {
   // Define the multicast address and port (replace with actual values)
   const MULTICAST_ADDR = '239.12.255.254';
   const MULTICAST_PORT = 9522;
-  const MAX_EXPORT = 6500;
+  const MAX_EXPORT = 6000;
   const INVERTER_POWER = 7000;
 
+  const deadBand = 0;
   var lastPersentage = 0;
 
   const server = dgram.createSocket({ type: 'udp4', reuseAddr: true });
@@ -104,18 +103,20 @@ const run = async (): Promise<void> => {
           const overProduction = production / 10 - MAX_EXPORT;
           //console.log(`production: ${production} overProduction: ${overProduction}`);
 
-          const desiredProduction = INVERTER_POWER - overProduction;
+          const desiredProduction = MAX_EXPORT - 0.1 * overProduction;
           const desiredPersentage = Math.floor(desiredProduction / INVERTER_POWER * 100);
           const controlPersentage = Math.min(Math.max(desiredPersentage, 0), 100);
           if (
-            ((controlPersentage < lastPersentage) && lastPersentage - controlPersentage > deadBand) ||
+            (controlPersentage < lastPersentage) ||
+            //((controlPersentage < lastPersentage) && lastPersentage - controlPersentage > deadBand) ||
             ((lastPersentage < controlPersentage) && controlPersentage - lastPersentage > deadBand)) {
             lastPersentage = controlPersentage;
+            await writeRegisterValues(advancedPwrControlEn, [0,1]);
             console.log(`Setting inverter to ${controlPersentage}%`);
             await writeRegisterAsync(1, activePowerLimit, controlPersentage);
-            client.setTimeout(5000);
+            //client.setTimeout(5000);
             await writeRegisterAsync(1, commitPowerControl, 1)
-            client.setTimeout(mbsTimeout);
+            //client.setTimeout(mbsTimeout);
           };
 
           //console.log(`${d}\t${h}:${m}:${s}.${ms}\t${-consumption / 10}\t${production / 10}`);        

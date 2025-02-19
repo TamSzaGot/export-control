@@ -57,10 +57,10 @@ const run = async (): Promise<void> => {
   // Define the multicast address and port (replace with actual values)
   const MULTICAST_ADDR = '239.12.255.254';
   const MULTICAST_PORT = 9522;
-  const MAX_EXPORT = 6000;
-  const INVERTER_POWER = 7000;
+  const MAX_PRODUCTION = 6900;
+  const INVERTER_POWER = 7400;
 
-  const deadBand = 0;
+  const deadBand = 2; //ignores ripple in the control signal
   var lastPersentage = 0;
 
   const server = dgram.createSocket({ type: 'udp4', reuseAddr: true });
@@ -88,8 +88,10 @@ const run = async (): Promise<void> => {
 
       if (length === 608) {
         const meter = msg.readUInt32BE(28);
-        const consumption = msg.readUInt32BE(32);
-        const production = msg.readUInt32BE(52);
+        const powerImport = msg.readUInt32BE(32) * 0.1;
+        //const powerImportFilterd = movingAverageFilter(powerImport);
+        const powerExport = msg.readUInt32BE(52) * 0.1;
+        const production = powerExport - powerImport;
         
         if (meter === 66560) {
           const timestamp = new Date();
@@ -100,27 +102,41 @@ const run = async (): Promise<void> => {
           const s = timestamp.getSeconds();
           const ms = timestamp.getMilliseconds();
 
-          const overProduction = production / 10 - MAX_EXPORT;
-          //console.log(`production: ${production} overProduction: ${overProduction}`);
+          const overProduction = production - MAX_PRODUCTION;
+          //console.log(`powerExport: ${powerExport / 10} overProduction: ${overProduction}`);
 
-          const desiredProduction = MAX_EXPORT - 0.1 * overProduction;
-          const desiredPersentage = Math.floor(desiredProduction / INVERTER_POWER * 100);
+          const inverterPower = (await client.readHoldingRegisters(40083, 1)).data[0];
+          //console.log(`inverterPower: ${inverterPower} power of MAX: ${inverterPower/INVERTER_POWER}`);
+
+          const desiredPower = inverterPower - overProduction;
+          //console.log(`desiredProduction: ${desiredProduction}`);
+
+          const desiredPersentage = Math.round(desiredPower / INVERTER_POWER * 100);
+          //console.log(`desiredPersentage %: ${desiredPersentage}`);
+
           const controlPersentage = Math.min(Math.max(desiredPersentage, 0), 100);
           if (
             (controlPersentage < lastPersentage) ||
             //((controlPersentage < lastPersentage) && lastPersentage - controlPersentage > deadBand) ||
             ((lastPersentage < controlPersentage) && controlPersentage - lastPersentage > deadBand)) {
             lastPersentage = controlPersentage;
-            await writeRegisterValues(advancedPwrControlEn, [0,1]);
+
+            const powerControlOn = (await client.readHoldingRegisters(61762, 2)).data[1];
+            if (powerControlOn === 0) {
+                await writeRegisterValues(61762, [0, 1]);
+                console.log(`Enabled Advanced Power Control`);
+            }
+
             console.log(`Setting inverter to ${controlPersentage}%`);
             await writeRegisterAsync(1, activePowerLimit, controlPersentage);
-            //client.setTimeout(5000);
-            await writeRegisterAsync(1, commitPowerControl, 1)
-            //client.setTimeout(mbsTimeout);
+
+            // commitPowerControl not needed?
+            //await writeRegisterAsync(1, commitPowerControl, 1)
           };
 
           //console.log(`${d}\t${h}:${m}:${s}.${ms}\t${-consumption / 10}\t${production / 10}`);        
-          console.log(`${t}\t${-consumption / 10}\t${production / 10}\t${overProduction}\t${desiredPersentage}%`);
+          //console.log(`${t}\t${(-powerImport).toFixed(1)}\t${(-powerImportFilterd).toFixed(1)}\t${powerExport.toFixed(1)}\t${inverterPower.toFixed(1)}\t${overProduction}\t${controlPersentage}%`);
+          console.log(`${t}\t${(-powerImport).toFixed(1)}\t${powerExport.toFixed(1)}\t${inverterPower.toFixed(1)}\t${overProduction}\t${controlPersentage}%`);
         }
       }
     } catch (err) {
@@ -170,6 +186,95 @@ const writeRegisterValues = async (register: number, values: Array<number>): Pro
   } catch (e) {
       console.log(e);
   }
+};
+
+var xm1 = 0, xm2 = 0, xm3 = 0;
+var ym1 = 0, ym2 = 0, ym3 = 0;
+const butterworthFilter = (x: number): number => {
+  // const a0 = 0.01809893300751445;
+  // const a1 = 0.05429679902254335;
+  // const a2 = 0.05429679902254335;
+  // const a3 = 0.01809893300751445;
+  // const b1 = -1.760041880343169;
+  // const b2 = 1.182893262037831;
+  // const b3 = -0.278059917634546;
+
+  // const a0 = 0.098531160923;
+  // const a1 = 0.295593482769;
+  // const a2 = 0.295593482769;
+  // const a3 = 0.098531160923;
+  // const b1 = -0.577240524806;
+  // const b2 = 0.421787048689;
+  // const b3 = -0.056297236491;
+
+  // const a0 = 0.01809893300751445;
+  // const a1 = 0.05429679902254335;
+  // const a2 = 0.05429679902254335;
+  // const a3 = 0.01809893300751445;
+  // const b1 = -1.760041880343169;
+  // const b2 = 1.182893262037831;
+  // const b3 = -0.278059917634546;
+
+  // const a0 = 0.03258; 
+  // const a1 = 0.09776; 
+  // const a2 = 0.09776; 
+  // const a3 = 0.03258; 
+  // const b1 = -1.55424; 
+  // const b2 = 1.09540; 
+  // const b3 = -0.28035;
+
+  const a0 = 0.0285; 
+  const a1 = 0.0855; 
+  const a2 = 0.0855; 
+  const a3 = 0.0285; 
+  const b1 = -1.6245; 
+  const b2 = 1.1228; 
+  const b3 = -0.2913; 
+
+
+  const y = a0 * x + a1 * xm1 + a2 * xm2 + a3 * xm3 - b1 * ym1 - b2 * ym2 - b3 * ym3;
+
+  xm3 = xm2;
+  xm2 = xm1;
+  xm1 = x;
+
+  ym3 = ym2;
+  ym2 = ym1;
+  ym1 = y;
+
+  return y;
+};
+
+const besselFilter = (x: number): number => {
+  // 3rd-order Bessel filter coefficients (0.2π cutoff, unit gain)
+  const a0 = 0.003621; 
+  const a1 = 0.010863; 
+  const a2 = 0.010863; 
+  const a3 = 0.003621; 
+  const b1 = -2.2997; 
+  const b2 = 1.7925; 
+  const b3 = -0.4403; 
+
+  const y = a0 * x + a1 * xm1 + a2 * xm2 + a3 * xm3 - b1 * ym1 - b2 * ym2 - b3 * ym3;
+
+  // Update states
+  xm3 = xm2; xm2 = xm1; xm1 = x;
+  ym3 = ym2; ym2 = ym1; ym1 = y;
+
+  return y;
+};
+
+var xm1 = 0, xm2 = 0;
+
+const movingAverageFilter = (x: number): number => {
+  // 3-sample moving average (unit gain, no overshoot)
+  const y = (x + xm1 + xm2) / 3; 
+
+  // Update states
+  xm2 = xm1;
+  xm1 = x;
+
+  return y;
 };
 
 run();

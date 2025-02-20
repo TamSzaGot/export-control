@@ -21,7 +21,8 @@ const connectClient = async (): Promise<void> => {
     try {
         await client.connectTCP(mbsHost, { port: mbsPort });
     } catch (e) {
-        console.log(e);
+      console.log(`could not connect client ${e}`);
+      console.log(e);
     }
 };
 
@@ -30,17 +31,15 @@ const writeRegisterAsync = async (unitId: number, register: number, value: numbe
     try {
       client.writeFC6(unitId, register, value, (err, data) => {
           if (err) {
-              //console.log(err);
+              console.log(err);
               reject(err);
           } else {
-              //console.log(data);
               resolve(data);
           }
       });
     } catch (e) {
-      console.log(`exceptoni in writeRegisterAsync ${e}`);
-      //console.log(e);
-      //reject(e);
+      console.log(`exception in writeRegisterAsync ${e}`);
+      reject(e);
     }
   });
 };
@@ -57,9 +56,10 @@ const run = async (): Promise<void> => {
   // Define the multicast address and port (replace with actual values)
   const MULTICAST_ADDR = '239.12.255.254';
   const MULTICAST_PORT = 9522;
-  const MAX_PRODUCTION = 6600;
-  const INVERTER_CONTROL = 5000; // production over this level controls lowers production, else allow 100%
   const INVERTER_POWER = 7400;
+  const MAX_EXPORTED_POWER = 6600;
+  const INVERTER_CONTROL_START = 5000; // export over this level controls the inverter
+  const INVERTER_CONTROL_RESET = 0; // export under this level controls the inverter, resetting to 100%
 
   const deadBand = 2; //ignores ripple in the control signal
   var lastPersentage = 0;
@@ -92,7 +92,7 @@ const run = async (): Promise<void> => {
         const powerImport = msg.readUInt32BE(32) * 0.1;
         //const powerImportFilterd = movingAverageFilter(powerImport);
         const powerExport = msg.readUInt32BE(52) * 0.1;
-        const production = powerExport - powerImport;
+        const exportedPower = powerExport - powerImport;
         
         if (meter === 66560) {
           const timestamp = new Date();
@@ -103,8 +103,8 @@ const run = async (): Promise<void> => {
           const s = timestamp.getSeconds();
           const ms = timestamp.getMilliseconds();
 
-          const overProduction = production - MAX_PRODUCTION;
-          //console.log(`powerExport: ${powerExport / 10} overProduction: ${overProduction}`);
+          const overProduction = exportedPower - MAX_EXPORTED_POWER;
+          //console.log(`exportedPower: ${exportedPower} overProduction: ${overProduction}`);
 
           const inverterPower = (await client.readHoldingRegisters(40083, 1)).data[0];
           //console.log(`inverterPower: ${inverterPower} power of MAX: ${inverterPower/INVERTER_POWER}`);
@@ -116,7 +116,7 @@ const run = async (): Promise<void> => {
           //console.log(`desiredPersentage %: ${desiredPersentage}`);
 
           const controlPersentage = Math.min(Math.max(desiredPersentage, 0), 100);
-          if ( production > INVERTER_CONTROL && (
+          if ( (exportedPower > INVERTER_CONTROL_START || exportedPower < INVERTER_CONTROL_RESET) && (
             (controlPersentage < lastPersentage) ||
             //((controlPersentage < lastPersentage) && lastPersentage - controlPersentage > deadBand) ||
             ((lastPersentage < controlPersentage) && controlPersentage - lastPersentage > deadBand)
@@ -136,13 +136,11 @@ const run = async (): Promise<void> => {
             //await writeRegisterAsync(1, commitPowerControl, 1)
           };
 
-          //console.log(`${d}\t${h}:${m}:${s}.${ms}\t${-consumption / 10}\t${production / 10}`);        
-          //console.log(`${t}\t${(-powerImport).toFixed(1)}\t${(-powerImportFilterd).toFixed(1)}\t${powerExport.toFixed(1)}\t${inverterPower.toFixed(1)}\t${overProduction}\t${controlPersentage}%`);
-          console.log(`${t}\t${(-powerImport).toFixed(1)}\t${powerExport.toFixed(1)}\t${inverterPower.toFixed(1)}\t${overProduction}\t${controlPersentage}%`);
+          console.log(`${t}\t${exportedPower.toFixed(1)}\t${inverterPower.toFixed(1)}\t${overProduction}\t${controlPersentage}%`);
         }
       }
     } catch (err) {
-      //console.log('Error parsing data:', err);
+      console.log('Error:', err);
     }
   });
 
@@ -184,9 +182,8 @@ const bufferToFloat32 = (buffer: Buffer): number => {
 const writeRegisterValues = async (register: number, values: Array<number>): Promise<void> => {
   try {
       await client.writeRegisters(register, values);
-      console.log(`Successfully wrote to register ${register}`);
   } catch (e) {
-      console.log(e);
+    console.log(`exception in writeRegisterValues ${e}`);
   }
 };
 

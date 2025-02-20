@@ -57,7 +57,8 @@ const run = async (): Promise<void> => {
   // Define the multicast address and port (replace with actual values)
   const MULTICAST_ADDR = '239.12.255.254';
   const MULTICAST_PORT = 9522;
-  const MAX_PRODUCTION = 6900;
+  const MAX_PRODUCTION = 6600;
+  const INVERTER_CONTROL = 5000; // production over this level controls lowers production, else allow 100%
   const INVERTER_POWER = 7400;
 
   const deadBand = 2; //ignores ripple in the control signal
@@ -115,10 +116,11 @@ const run = async (): Promise<void> => {
           //console.log(`desiredPersentage %: ${desiredPersentage}`);
 
           const controlPersentage = Math.min(Math.max(desiredPersentage, 0), 100);
-          if (
+          if ( production > INVERTER_CONTROL && (
             (controlPersentage < lastPersentage) ||
             //((controlPersentage < lastPersentage) && lastPersentage - controlPersentage > deadBand) ||
-            ((lastPersentage < controlPersentage) && controlPersentage - lastPersentage > deadBand)) {
+            ((lastPersentage < controlPersentage) && controlPersentage - lastPersentage > deadBand)
+            )) {
             lastPersentage = controlPersentage;
 
             const powerControlOn = (await client.readHoldingRegisters(61762, 2)).data[1];
